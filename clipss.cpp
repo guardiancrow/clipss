@@ -221,20 +221,19 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	MSG msg;
 	int x, y, w, h;
 	
+	nOffSetX = nOffSetY = 0;
 	hMainWnd = hLayeredWnd = NULL;
 	SecureZeroMemory(szSaveDir, MAX_PATH);
 	SecureZeroMemory(szTempDir, MAX_PATH);
-	char *lpDir = new char[MAX_PATH+1];
-	GetProcessDirectory(lpDir, MAX_PATH);
-	memcpy(szSaveDir, lpDir, MAX_PATH);
-	memcpy(szTempDir, lpDir, MAX_PATH);
-	delete [] lpDir;
+	SecureZeroMemory(szFontName, MAX_PATH);
 
+	//iniから設定を読み込みます
 	LoadProfiles();
 
 	RegisterMainWindow(hInstance);
 	RegisterLayeredWindow(hInstance);
 
+	//デスクトップを測定
 	x = GetSystemMetrics(SM_XVIRTUALSCREEN);
 	y = GetSystemMetrics(SM_YVIRTUALSCREEN);
 	w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -275,6 +274,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	}
 	SetLayeredWindowAttributes(hLayeredWnd, RGB(255, 0, 0), 128, LWA_COLORKEY | LWA_ALPHA);
 
+	//メッセージループ
 	while(GetMessage(&msg, NULL, 0, 0))
 	{
 		TranslateMessage(&msg);
@@ -318,13 +318,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		if(SelectMode != RECTMODE){
 			break;
 		}
+		//選択矩形保存の際はここに処理が来ます
 		clipRect.right = LOWORD(lParam) + nOffSetX;
 		clipRect.bottom = HIWORD(lParam) + nOffSetY;
 		SelectMode = DISABLEMODE;
 		ReleaseCapture();
 		hdc = GetDC(NULL);
+
+		//ラバーバンド消去
 		ShowRubberBand(hdc, &clipRect, TRUE);
 		ShowWindow(hWnd, SW_HIDE);
+
+		//キャプチャ書き出し後、終了
 		lpszfilename = new char[MAX_PATH+1];
 		BuildSaveFileName(lpszfilename, MAX_PATH);
 		CaptureRect(hdc, &clipRect, lpszfilename);
@@ -337,6 +342,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		PrevMode = SelectMode;
 		//ESCAPEで終了
 		if(GetKeyState(VK_ESCAPE) & 0x8000){
+			SaveProfiles();
 			DestroyWindow(hWnd);
 		//左Ctrlでクライアントモード
 		}else if(GetKeyState(VK_LCONTROL) & 0x8000){
@@ -391,10 +397,10 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 	HPEN hPen;
 	HFONT hFont;
 	char szWidth[MAX_PATH], szHeight[MAX_PATH], szMode[MAX_PATH];
+	SIZE sizeWidth = {0,0}, sizeHeight={0,0};
 	char *lpszfilename;
 	int nFontHeight;
 	int nWidth, nHeight;
-	int w,h,h2;
 	POINT pt;
 
 	switch (msg)
@@ -415,9 +421,13 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 			clipRect.right = GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
 			clipRect.bottom = GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
 		}
+
+		//PullWindow判定
 		if(PullWindow && !(SelectMode == FULLSCREENMODE)){
 			SetTopWindowPos(pt.x, pt.y);
 		}
+
+		//キャプチャと書き出し、後終了
 		hdc = GetDC(NULL);
 		ShowRubberBand(hdc, &clipRect, TRUE);
 		ShowWindow(hMainWnd, SW_HIDE);
@@ -456,15 +466,13 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		SelectObject(hdc, hFont);
 		nWidth  = clipRect.right  - clipRect.left;
 		nHeight = clipRect.bottom - clipRect.top;
-		w = -nFontHeight * 2.5 + nFontSize;
-		h = -nFontHeight * 2 + nFontSize;
-		h2 = h + nFontHeight;
 
+		//描画情報を用意します
 		SecureZeroMemory(szWidth, MAX_PATH);
 		SecureZeroMemory(szHeight, MAX_PATH);
 		SecureZeroMemory(szMode, MAX_PATH);
-		sprintf(szWidth, "%d", nWidth);
-		sprintf(szHeight, "%d", nHeight);
+		sprintf(szWidth, "W:%d", nWidth);
+		sprintf(szHeight, "H:%d", nHeight);
 		if(SelectMode == RECTMODE){
 			sprintf(szMode, "RECTANGLE MODE");
 		}else if(SelectMode == WINDOWMODE){
@@ -473,27 +481,35 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 			sprintf(szMode, "CLIENT MODE");
 		}else if(SelectMode == FULLSCREENMODE){
 			sprintf(szMode, "FULLSCREEN MODE");
-		//}else{
-		//	SecureZeroMemory(szMode, MAX_PATH);
 		}
+
+		//サイズ情報の描画位置を決定（モード情報のY座標も）
+		GetTextExtentPoint32(hdc, szWidth, strlen(szWidth), &sizeWidth);
+		GetTextExtentPoint32(hdc, szHeight, strlen(szHeight), &sizeHeight);
+		sizeWidth.cy *= 2;
+		sizeWidth.cx += nFontSize;
+		sizeWidth.cy += nFontSize;
+		sizeHeight.cx += nFontSize;
+		sizeHeight.cy += nFontSize;
 
 		//ここから情報を描画
 		SetBkMode(hdc, TRANSPARENT);
 
 		//影付け
 		SetTextColor(hdc, ShadowColor);
-		TextOut(hdc, clipRect.right - w + 1, clipRect.bottom - h + 1, (LPCTSTR)szWidth, strlen(szWidth));
-		TextOut(hdc, clipRect.right - w + 1, clipRect.bottom - h2 + 1, (LPCTSTR)szHeight, strlen(szHeight));
-		TextOut(hdc, nFontSize + 1, clipRect.bottom - h2 + 1, (LPCTSTR)szMode, strlen(szMode));
+		TextOut(hdc, clipRect.right - sizeWidth.cx + 1, clipRect.bottom - sizeWidth.cy + 1, (LPCTSTR)szWidth, strlen(szWidth));
+		TextOut(hdc, clipRect.right - sizeHeight.cx + 1, clipRect.bottom - sizeHeight.cy + 1, (LPCTSTR)szHeight, strlen(szHeight));
+		TextOut(hdc, nFontSize + 1, clipRect.bottom - sizeHeight.cy + 1, (LPCTSTR)szMode, strlen(szMode));
 		TextOut(hdc, nFontSize + 1, nFontSize + 1, (LPCTSTR)szAppName, strlen(szAppName));
 
 		//本文
 		SetTextColor(hdc, ForegroundColor);
-		TextOut(hdc, clipRect.right - w, clipRect.bottom - h, (LPCTSTR)szWidth, strlen(szWidth));
-		TextOut(hdc, clipRect.right - w, clipRect.bottom - h2, (LPCTSTR)szHeight, strlen(szHeight));
-		TextOut(hdc, nFontSize, clipRect.bottom - h2, (LPCTSTR)szMode, strlen(szMode));
+		TextOut(hdc, clipRect.right - sizeWidth.cx, clipRect.bottom - sizeWidth.cy, (LPCTSTR)szWidth, strlen(szWidth));
+		TextOut(hdc, clipRect.right - sizeHeight.cx, clipRect.bottom - sizeHeight.cy, (LPCTSTR)szHeight, strlen(szHeight));
+		TextOut(hdc, nFontSize, clipRect.bottom - sizeHeight.cy, (LPCTSTR)szMode, strlen(szMode));
 		TextOut(hdc, nFontSize, nFontSize, (LPCTSTR)szAppName, strlen(szAppName));
 
+		//後始末
 		DeleteObject(hPen);
 		DeleteObject(hBrush);
 		DeleteObject(hFont);
@@ -506,6 +522,10 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 /// デバイスコンテキストから矩形で指定された部分をくり抜きファイルに保存します
+/// @param hdc デバイスコンテキスト
+/// @param lprect 切り抜く矩形情報へのポインタ
+/// @param filename 出力ファイル名
+/// @return TRUE:成功 FALSE:失敗
 BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 {
 	HDC bufferDC;
@@ -520,6 +540,7 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 	}
 
 	nWidth = nHeight = 0;
+	lpBm = NULL;
 
 	rect = *lprect;
 	ValidateRect(&rect);
@@ -595,6 +616,7 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize)
 	str = szSaveDir;
 	str = "clipss";
 
+	//sprintfなんてなかった
 	if(PostfixMode == POSTFIX_CONSECUTIVENUMBER){
 		str += "_";
 		if(uLastNumber > 9999){
@@ -926,6 +948,7 @@ BOOL LoadProfiles(void)
 
 	SecureZeroMemory(szSaveDir, MAX_PATH);
 	SecureZeroMemory(szTempDir, MAX_PATH);
+	SecureZeroMemory(szFontName, MAX_PATH);
 	
 	GetPrivateProfileString(_T("clipss"), _T("SaveDir"), lpProcessDir, szSaveDir, MAX_PATH, _T("./clipss.ini"));
 	GetPrivateProfileString(_T("clipss"), _T("TempDir"), lpProcessDir, szTempDir, MAX_PATH, _T("./clipss.ini"));	

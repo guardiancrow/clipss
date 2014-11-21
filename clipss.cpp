@@ -348,12 +348,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}else if(GetKeyState(VK_LCONTROL) & 0x8000){
 			SelectMode = CLIENTMODE;
 			GetCursorPos(&pt);
-			GetTopClientRect(&clipRect, pt.x, pt.y);
+			GetTopClientRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
 		//左Shiftでウインドウモード
 		}else if(GetKeyState(VK_LSHIFT) & 0x8000){
 			SelectMode = WINDOWMODE;
 			GetCursorPos(&pt);
-			GetTopWindowRect(&clipRect, pt.x, pt.y);
+			GetTopWindowRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
 		//左Altでフルスクリーンモード
 		}else if(GetKeyState(VK_LMENU) & 0x8000){
 			SelectMode = FULLSCREENMODE;
@@ -412,9 +412,9 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		pt.y = HIWORD(lParam);
 		ClientToScreen(hWnd, &pt);
 		if(SelectMode == WINDOWMODE){
-			GetTopWindowRect(&clipRect, pt.x, pt.y);
+			GetTopWindowRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
 		}else if(SelectMode == CLIENTMODE){
-			GetTopClientRect(&clipRect, pt.x, pt.y);
+			GetTopClientRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
 		}else if(SelectMode == FULLSCREENMODE){
 			clipRect.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
 			clipRect.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
@@ -424,7 +424,7 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 		//PullWindow判定
 		if(PullWindow && !(SelectMode == FULLSCREENMODE)){
-			SetTopWindowPos(pt.x, pt.y);
+			SetTopWindowPos((WORD)pt.x, (WORD)pt.y);
 		}
 
 		//キャプチャと書き出し、後終了
@@ -471,16 +471,16 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		SecureZeroMemory(szWidth, MAX_PATH);
 		SecureZeroMemory(szHeight, MAX_PATH);
 		SecureZeroMemory(szMode, MAX_PATH);
-		sprintf(szWidth, "W:%d", nWidth);
-		sprintf(szHeight, "H:%d", nHeight);
+		wsprintf(szWidth, "W:%d", nWidth);
+		wsprintf(szHeight, "H:%d", nHeight);
 		if(SelectMode == RECTMODE){
-			sprintf(szMode, "RECTANGLE MODE");
+			wsprintf(szMode, "RECTANGLE MODE");
 		}else if(SelectMode == WINDOWMODE){
-			sprintf(szMode, "WINDOW MODE");
+			wsprintf(szMode, "WINDOW MODE");
 		}else if(SelectMode == CLIENTMODE){
-			sprintf(szMode, "CLIENT MODE");
+			wsprintf(szMode, "CLIENT MODE");
 		}else if(SelectMode == FULLSCREENMODE){
-			sprintf(szMode, "FULLSCREEN MODE");
+			wsprintf(szMode, "FULLSCREEN MODE");
 		}
 
 		//サイズ情報の描画位置を決定（モード情報のY座標も）
@@ -614,44 +614,23 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize)
 	}
 
 	str = szSaveDir;
-	str = "clipss";
+	str += "clipss";
 
 	//sprintfなんてなかった
 	if(PostfixMode == POSTFIX_CONSECUTIVENUMBER){
 		str += "_";
-		if(uLastNumber > 9999){
-			uLastNumber = 0;
-		}
-		if(uLastNumber <= 999){
-			str += "0";
-		}
-		if(uLastNumber <= 99){
-			str += "0";
-		}
-		if(uLastNumber <= 9){
-			str += "0";
-		}
-		str += toString(uLastNumber);
+		char szNumber[5];
+		SecureZeroMemory(szNumber, 4);
+		wsprintf(szNumber, "%04u", uLastNumber);
+		str += szNumber;
 		uLastNumber++;
 	}else if(PostfixMode == POSTFIX_DATETIME){
 		str += "_";
 		GetLocalTime(&st);
-		str += toString(st.wYear);
-		if(st.wMonth <= 9)
-			str += "0";
-		str += toString(st.wMonth);
-		if(st.wDay <= 9)
-			str += "0";
-		str += toString(st.wDay);
-		if(st.wHour <= 9)
-			str += "0";
-		str += toString(st.wHour);
-		if(st.wMinute <= 9)
-			str += "0";
-		str += toString(st.wMinute);
-		if(st.wSecond <= 9)
-			str += "0";
-		str += toString(st.wSecond);
+		char szNumber[15];
+		SecureZeroMemory(szNumber, 14);
+		wsprintf(szNumber, "%04u%02u%02u%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+		str += szNumber;
 	}else if(PostfixMode == POSTFIX_HASH){
 		UuidCreate(&uuid);
 		UuidToString(&uuid, &lpUuidString);
@@ -945,24 +924,26 @@ BOOL LoadProfiles(void)
 	PullWindow = 0;
 	char *lpProcessDir = new char[MAX_PATH+1];
 	GetProcessDirectory(lpProcessDir, MAX_PATH);
+	string strINIFileName = lpProcessDir;
+	strINIFileName += "clipss.ini";
 
 	SecureZeroMemory(szSaveDir, MAX_PATH);
 	SecureZeroMemory(szTempDir, MAX_PATH);
 	SecureZeroMemory(szFontName, MAX_PATH);
 	
-	GetPrivateProfileString(_T("clipss"), _T("SaveDir"), lpProcessDir, szSaveDir, MAX_PATH, _T("./clipss.ini"));
-	GetPrivateProfileString(_T("clipss"), _T("TempDir"), lpProcessDir, szTempDir, MAX_PATH, _T("./clipss.ini"));	
-	SaveFormat = GetPrivateProfileInt(_T("clipss"), _T("SaveFormat"), 1, _T("./clipss.ini"));
-	PngOptimize = GetPrivateProfileInt(_T("clipss"), _T("PngOptimize"), 0, _T("./clipss.ini"));
-	nJpegQuality = GetPrivateProfileInt(_T("clipss"), _T("JpegQuality"), 75, _T("./clipss.ini"));
-	PullWindow = GetPrivateProfileInt(_T("clipss"), _T("PullWindow"), 1, _T("./clipss.ini"));
-	PostfixMode = GetPrivateProfileInt(_T("clipss"), _T("PostfixMode"), 1, _T("./clipss.ini"));
-	GetPrivateProfileString(_T("clipss"), _T("FontName"), _T("Verdana"), szFontName, MAX_PATH, _T("./clipss.ini"));
-	nFontSize = GetPrivateProfileInt(_T("clipss"), _T("FontSize"), 10, _T("./clipss.ini"));
-	ForegroundColor = GetPrivateProfileInt(_T("clipss"), _T("ForegroundColor"), 0xFFFFFF, _T("./clipss.ini"));
-	BackgroundColor = GetPrivateProfileInt(_T("clipss"), _T("BackgroundColor"), 0xFF3F3F, _T("./clipss.ini"));
-	ShadowColor = GetPrivateProfileInt(_T("clipss"), _T("ShadowColor"), 0x000000, _T("./clipss.ini"));
-	uLastNumber = GetPrivateProfileInt(_T("clipss"), _T("LastNumber"), 0, _T("./clipss.ini"));
+	GetPrivateProfileString(_T("clipss"), _T("SaveDir"), lpProcessDir, szSaveDir, MAX_PATH, strINIFileName.c_str());
+	GetPrivateProfileString(_T("clipss"), _T("TempDir"), lpProcessDir, szTempDir, MAX_PATH, strINIFileName.c_str());
+	SaveFormat = GetPrivateProfileInt(_T("clipss"), _T("SaveFormat"), 1, strINIFileName.c_str());
+	PngOptimize = GetPrivateProfileInt(_T("clipss"), _T("PngOptimize"), 0, strINIFileName.c_str());
+	nJpegQuality = GetPrivateProfileInt(_T("clipss"), _T("JpegQuality"), 75, strINIFileName.c_str());
+	PullWindow = GetPrivateProfileInt(_T("clipss"), _T("PullWindow"), 1, strINIFileName.c_str());
+	PostfixMode = GetPrivateProfileInt(_T("clipss"), _T("PostfixMode"), 1, strINIFileName.c_str());
+	GetPrivateProfileString(_T("clipss"), _T("FontName"), _T("Verdana"), szFontName, MAX_PATH, strINIFileName.c_str());
+	nFontSize = GetPrivateProfileInt(_T("clipss"), _T("FontSize"), 10, strINIFileName.c_str());
+	ForegroundColor = GetPrivateProfileInt(_T("clipss"), _T("ForegroundColor"), 0xFFFFFF, strINIFileName.c_str());
+	BackgroundColor = GetPrivateProfileInt(_T("clipss"), _T("BackgroundColor"), 0xFF3F3F, strINIFileName.c_str());
+	ShadowColor = GetPrivateProfileInt(_T("clipss"), _T("ShadowColor"), 0x000000, strINIFileName.c_str());
+	uLastNumber = GetPrivateProfileInt(_T("clipss"), _T("LastNumber"), 0, strINIFileName.c_str());
 
 	delete [] lpProcessDir;
 
@@ -998,19 +979,25 @@ BOOL SaveProfiles(void)
 	string strShadowColor = toString(ShadowColor);
 	string strLastNumber = toString(uLastNumber);
 
-	WritePrivateProfileString(_T("clipss"), _T("SaveDir"), szSaveDir, _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("TempDir"), szTempDir, _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("SaveFormat"), strSaveFormat.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("PngOptimize"), strPngOptimize.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("JpegQuality"), strJpegQuality.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("PullWindow"), strPullWindow.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("PostfixMode"), strPostfixMode.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("FontName"), szFontName, _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("FontSize"), strFontSize.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("ForegroundColor"), strForegroundColor.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("BackgroundColor"), strBackgroundColor.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("ShadowColor"), strShadowColor.c_str(), _T("./clipss.ini"));
-	WritePrivateProfileString(_T("clipss"), _T("LastNumber"), strLastNumber.c_str(), _T("./clipss.ini"));
+	char *lpProcessDir = new char[MAX_PATH + 1];
+	GetProcessDirectory(lpProcessDir, MAX_PATH);
+	string strINIFileName = lpProcessDir;
+	strINIFileName += "clipss.ini";
+	delete[] lpProcessDir;
+
+	WritePrivateProfileString(_T("clipss"), _T("SaveDir"), szSaveDir, strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("TempDir"), szTempDir, strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("SaveFormat"), strSaveFormat.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("PngOptimize"), strPngOptimize.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("JpegQuality"), strJpegQuality.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("PullWindow"), strPullWindow.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("PostfixMode"), strPostfixMode.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("FontName"), szFontName, strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("FontSize"), strFontSize.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("ForegroundColor"), strForegroundColor.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("BackgroundColor"), strBackgroundColor.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("ShadowColor"), strShadowColor.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("LastNumber"), strLastNumber.c_str(), strINIFileName.c_str());
 
 	return TRUE;
 }

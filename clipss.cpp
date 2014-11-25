@@ -83,6 +83,9 @@ COLORREF ShadowColor;
 ///前回の連番数
 UINT uLastNumber;
 
+///ICMModeの有効無効フラグ
+BOOL ICMMode;
+
 //ここまで設定用　以下iniに書き込まないグローバル変数
 
 ///メインウインドウのクラス名
@@ -433,6 +436,7 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		ShowWindow(hMainWnd, SW_HIDE);
 		Sleep(100);
 		lpszfilename = new char[MAX_PATH+1];
+		SecureZeroMemory(lpszfilename, MAX_PATH);
 		BuildSaveFileName(lpszfilename, MAX_PATH);
 		CaptureRect(hdc, &clipRect, lpszfilename);
 		delete [] lpszfilename;
@@ -550,6 +554,12 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 
 	if(nWidth == 0 || nHeight == 0) {
 		return FALSE;
+	}
+
+	if (ICMMode){
+		SetICMMode(hdc, ICM_ON);
+	}else{
+		SetICMMode(hdc, ICM_OFF);
 	}
 
 	bufferDC = CreateCompatibleDC(hdc);
@@ -944,6 +954,7 @@ BOOL LoadProfiles(void)
 	BackgroundColor = GetPrivateProfileInt(_T("clipss"), _T("BackgroundColor"), 0xFF3F3F, strINIFileName.c_str());
 	ShadowColor = GetPrivateProfileInt(_T("clipss"), _T("ShadowColor"), 0x000000, strINIFileName.c_str());
 	uLastNumber = GetPrivateProfileInt(_T("clipss"), _T("LastNumber"), 0, strINIFileName.c_str());
+	ICMMode = GetPrivateProfileInt(_T("clipss"), _T("ICMMode"), 1, strINIFileName.c_str());
 
 	delete [] lpProcessDir;
 
@@ -978,6 +989,7 @@ BOOL SaveProfiles(void)
 	string strBackgroundColor = toString(BackgroundColor);
 	string strShadowColor = toString(ShadowColor);
 	string strLastNumber = toString(uLastNumber);
+	string strICMMode = toString(ICMMode);
 
 	char *lpProcessDir = new char[MAX_PATH + 1];
 	GetProcessDirectory(lpProcessDir, MAX_PATH);
@@ -998,6 +1010,7 @@ BOOL SaveProfiles(void)
 	WritePrivateProfileString(_T("clipss"), _T("BackgroundColor"), strBackgroundColor.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("ShadowColor"), strShadowColor.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("LastNumber"), strLastNumber.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("ICMMode"), strICMMode.c_str(), strINIFileName.c_str());
 
 	return TRUE;
 }

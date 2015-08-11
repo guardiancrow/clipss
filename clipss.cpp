@@ -1,13 +1,14 @@
 //clipssはWindows用画面キャプチャソフトウエアです
 //詳細は添付ドキュメントをご覧ください
 //
-//Copyright (C) 2014, guardiancrow
+//Copyright (C) 2014 - 2015, guardiancrow
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <tchar.h>
 #include <stdlib.h>	//_splitpath
 #include <rpc.h>	//uuid
+#include <shellapi.h>
 
 #include <iostream>
 #include <fstream>
@@ -17,16 +18,29 @@
 #include "pngutil.h"
 #include "jpegutil.h"
 
+#define IDM_EXIT				101
+#define IDM_ABOUT				102
+#define IDM_RECTMODE			103
+#define IDM_CLIENTMODE			104
+#define	IDM_SHIFTMODE			105
+#define	IDM_FULLSCREENMODE		106
+#define IDM_SEPARATOR			200
+#define WM_NOTIFYICON (WM_USER+123)
+#define ID_TASKTRAY 0
+
 using namespace std;
 
 //EntryPoints
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK LayeredWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK TipLayeredWndProc(HWND, UINT, WPARAM, LPARAM);
 BOOL CALLBACK EnumWindowsWindowRectProc(HWND hWnd, LPARAM lParam);
 BOOL CALLBACK EnumWindowsClientRectProc(HWND hWnd, LPARAM lParam);
 
 ATOM RegisterMainWindow(HINSTANCE hInstance);
 ATOM RegisterLayeredWindow(HINSTANCE hInstance);
+ATOM RegisterTipLayeredWindow(HINSTANCE hInstance);
+
 BOOL ShowRubberBand(HDC hdc, LPRECT lprect, BOOL Erase);
 BOOL SaveBitmap(const char *filename, BITMAPINFO bmpinfo, LPBYTE bm);
 BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename);
@@ -40,6 +54,11 @@ BOOL LoadProfiles(void);
 BOOL SaveProfiles(void);
 
 void GetProcessDirectory(char *pDir, unsigned int uBufSize);
+
+BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip);
+BOOL DeleteNotifyIcon(HWND hWnd, unsigned int uID);
+BOOL SwitchIdleMode(void);
+BOOL CalcTipWindowSize(HWND hWnd, SIZE *lpSize);
 
 //Global Params
 //iniに読み書きする設定用
@@ -94,6 +113,9 @@ LPCTSTR szMainWindowClass = _T("clipss");
 ///レイヤーウインドウのクラス名
 LPCTSTR szLayeredWindowClass = _T("clipssLay");
 
+///チップウインドウのクラス名
+LPCTSTR szTipLayeredWindowClass = _T("clipssTip");
+
 ///アプリケーション名
 LPCTSTR szAppName = _T("CLIPSS");
 
@@ -106,8 +128,14 @@ int nOffSetY;
 HWND hMainWnd;
 ///レイヤーウインドウハンドルのグローバル変数
 HWND hLayeredWnd;
+///チップウインドウハンドルのグローバル変数
+HWND hTipWnd;
+
 ///領域選択のためのウインドウハンドル：グローバル変数
 HWND hWndRect;
+
+///タイマーのID：グローバル変数
+UINT_PTR uIDTimer;
 
 
 ///各クリップモードの定義です
@@ -116,9 +144,10 @@ enum CLIPSS_MODE{
 	WINDOWMODE,
 	CLIENTMODE,
 	FULLSCREENMODE,
-	DISABLEMODE
+	IDLEMODE,
+	READYMODE//DISABLEMODE
 };
-static CLIPSS_MODE SelectMode = DISABLEMODE;
+static CLIPSS_MODE SelectMode = READYMODE;//DISABLEMODE;
 
 ///保存画像形式の定義です
 enum IMAGEFORMAT{
@@ -223,9 +252,20 @@ int WINAPI WinMain(HINSTANCE hInstance,
 {
 	MSG msg;
 	int x, y, w, h;
+
+	//二重起動を抑止します
+	//SECURITY_ATTRIBUTESがNULL（他ユーザーの使用は想定しない）
+	//ハンドルの閉じ忘れに注意
+	HANDLE hMutex = CreateMutex(NULL, TRUE, "clipss_mutex");
+	if(hMutex == NULL){
+		return FALSE;
+	}else if(GetLastError() == ERROR_ALREADY_EXISTS){
+		CloseHandle(hMutex);
+		return FALSE;
+	}
 	
 	nOffSetX = nOffSetY = 0;
-	hMainWnd = hLayeredWnd = NULL;
+	hMainWnd = hLayeredWnd = hTipWnd = NULL;
 	SecureZeroMemory(szSaveDir, MAX_PATH);
 	SecureZeroMemory(szTempDir, MAX_PATH);
 	SecureZeroMemory(szFontName, MAX_PATH);
@@ -235,6 +275,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	RegisterMainWindow(hInstance);
 	RegisterLayeredWindow(hInstance);
+	RegisterTipLayeredWindow(hInstance);
 
 	//デスクトップを測定
 	x = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -255,6 +296,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		NULL, NULL, hInstance, NULL);
 	if(!hMainWnd)
 	{
+		CloseHandle(hMutex);
 		return FALSE;
 	}
 	MoveWindow(hMainWnd, x, y, w, h, FALSE);
@@ -262,7 +304,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	UpdateWindow(hMainWnd);
 
 	// メインウインドウが透明であるためキーボードの情報はWM_TIMERで受け取ります
-	SetTimer(hMainWnd, 1, 100, NULL);
+	uIDTimer = 0;
+	uIDTimer = SetTimer(hMainWnd, 1, 100, NULL);
 	
 	/// レイヤーウインドウはレイヤー属性を与え、メインウインドウと関連づけます
 	/// こちらもXPぐらい？からの機能だと記憶しています
@@ -273,9 +316,30 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	if(!hLayeredWnd)
 	{
 		DestroyWindow(hMainWnd);
+		CloseHandle(hMutex);
 		return FALSE;
 	}
 	SetLayeredWindowAttributes(hLayeredWnd, RGB(255, 0, 0), 128, LWA_COLORKEY | LWA_ALPHA);
+
+
+	hTipWnd = CreateWindowEx(WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+		szTipLayeredWindowClass, NULL, WS_POPUP,
+		0, 0, 0, 0,
+		hMainWnd, NULL, hInstance, NULL);
+	SetLayeredWindowAttributes(hTipWnd, RGB(0, 255, 0), 128, LWA_COLORKEY | LWA_ALPHA);
+	if(!hTipWnd)
+	{
+		DestroyWindow(hLayeredWnd);
+		DestroyWindow(hMainWnd);
+		CloseHandle(hMutex);
+		return FALSE;
+	}
+	ShowWindow(hTipWnd, SW_SHOW);
+	UpdateWindow(hTipWnd);
+
+	AddNotifyIcon(hMainWnd, ID_TASKTRAY,
+				(HICON)LoadImage(NULL, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED),
+				(TCHAR*)szAppName);
 
 	//メッセージループ
 	while(GetMessage(&msg, NULL, 0, 0))
@@ -283,6 +347,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}
+
+	DeleteNotifyIcon(hMainWnd, ID_TASKTRAY);
+	CloseHandle(hMutex);
 	
 	return (int)msg.wParam;
 }
@@ -307,6 +374,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			clipRect.right = LOWORD(lParam) + nOffSetX;
 			clipRect.bottom = HIWORD(lParam) + nOffSetY;
 		}
+
+		//TipWindowの処理
+		if(SelectMode == READYMODE){
+			SIZE size;
+			size.cx = size.cy = 0;
+			CalcTipWindowSize(hTipWnd, &size);
+			MoveWindow(hTipWnd,
+				LOWORD(lParam) + 24, HIWORD(lParam) + 24,
+			//	560, 280, TRUE);
+				size.cx, size.cy, TRUE);
+			ShowWindow(hTipWnd, SW_SHOW);
+		}else{
+			MoveWindow(hTipWnd, 0, 0, 0, 0, TRUE);
+			ShowWindow(hTipWnd, SW_HIDE);
+		}
+
 		hdc = GetDC(NULL);
 		ShowRubberBand(hdc, &clipRect, FALSE);
 		ReleaseDC(NULL, hdc);
@@ -324,7 +407,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		//選択矩形保存の際はここに処理が来ます
 		clipRect.right = LOWORD(lParam) + nOffSetX;
 		clipRect.bottom = HIWORD(lParam) + nOffSetY;
-		SelectMode = DISABLEMODE;
+		SelectMode = READYMODE;//DISABLEMODE;
 		ReleaseCapture();
 		hdc = GetDC(NULL);
 
@@ -339,46 +422,123 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		delete [] lpszfilename;
 		ReleaseDC(NULL, hdc);
 		SaveProfiles();
-		DestroyWindow(hWnd);
+		//DestroyWindow(hWnd);
+
+		//IDLEMODEに
+		SwitchIdleMode();
 		break;
 	case WM_TIMER:
 		PrevMode = SelectMode;
-		//ESCAPEで終了
+		//ESCAPEで中断
 		if(GetKeyState(VK_ESCAPE) & 0x8000){
-			SaveProfiles();
-			DestroyWindow(hWnd);
-		//左Ctrlでクライアントモード
-		}else if(GetKeyState(VK_LCONTROL) & 0x8000){
+			SwitchIdleMode();
+			UpdateWindow(hWnd);
+			//SaveProfiles();
+			//DestroyWindow(hWnd);
+		//Ctrlでクライアントモード
+		}else if(GetKeyState(VK_CONTROL) & 0x8000){
 			SelectMode = CLIENTMODE;
 			GetCursorPos(&pt);
 			GetTopClientRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
-		//左Shiftでウインドウモード
-		}else if(GetKeyState(VK_LSHIFT) & 0x8000){
+		//Shiftでウインドウモード
+		}else if(GetKeyState(VK_SHIFT) & 0x8000){
 			SelectMode = WINDOWMODE;
 			GetCursorPos(&pt);
 			GetTopWindowRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
-		//左Altでフルスクリーンモード
-		}else if(GetKeyState(VK_LMENU) & 0x8000){
+		//Altでフルスクリーンモード
+		}else if(GetKeyState(VK_MENU) & 0x8000){
 			SelectMode = FULLSCREENMODE;
 			clipRect.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
 			clipRect.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
 			clipRect.right = GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
 			clipRect.bottom = GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
-		//右Ctrl 右Shft 右Altでモードキャンセル
-		}else if(GetKeyState(VK_RCONTROL) & 0x8000){
-			SelectMode = DISABLEMODE;
-			clipRect.left = clipRect.top = clipRect.right = clipRect.bottom = 0;
-		}else if(GetKeyState(VK_RSHIFT) & 0x8000){
-			SelectMode = DISABLEMODE;
-			clipRect.left = clipRect.top = clipRect.right = clipRect.bottom = 0;
-		}else if(GetKeyState(VK_RMENU) & 0x8000){
-			SelectMode = DISABLEMODE;
+		//SPACEで各モードから矩形選択モードに戻る
+		}else if(GetKeyState(VK_SPACE) & 0x8000){
+			SelectMode = READYMODE;
 			clipRect.left = clipRect.top = clipRect.right = clipRect.bottom = 0;
 		}
-		if(SelectMode != PrevMode){
+
+		if(SelectMode != READYMODE){
+			ShowWindow(hTipWnd, SW_HIDE);
+		}
+
+		//if(SelectMode != PrevMode){
 			hdc = GetDC(NULL);
 			ShowRubberBand(hdc, &clipRect, FALSE);
 			ReleaseDC(NULL, hdc);
+		//}
+		break;
+	case WM_COMMAND:
+        int wmId;
+		wmId = LOWORD(wParam);
+		PrevMode = SelectMode;
+        switch (wmId) {
+			case IDM_RECTMODE:
+				SelectMode = READYMODE;
+				clipRect.left = clipRect.top = clipRect.right = clipRect.bottom = 0;
+				ShowWindow(hWnd, SW_SHOW);
+				break;
+			case IDM_CLIENTMODE:
+				SelectMode = CLIENTMODE;
+				GetCursorPos(&pt);
+				GetTopClientRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
+				ShowWindow(hWnd, SW_SHOW);
+				break;
+			case IDM_SHIFTMODE:
+				SelectMode = WINDOWMODE;
+				GetCursorPos(&pt);
+				GetTopWindowRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
+				ShowWindow(hWnd, SW_SHOW);
+				break;
+			case IDM_FULLSCREENMODE:
+				SelectMode = FULLSCREENMODE;
+				clipRect.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+				clipRect.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+				clipRect.right = GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
+				clipRect.bottom = GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
+				ShowWindow(hWnd, SW_SHOW);
+				break;
+			case IDM_ABOUT:
+                break;
+            case IDM_EXIT:
+                DestroyWindow(hWnd);
+                break;
+            default:
+                return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+		if(SelectMode != PrevMode){
+			if(uIDTimer == 0){
+				uIDTimer = SetTimer(hWnd, 1, 100, NULL);
+			}
+			hdc = GetDC(NULL);
+			ShowRubberBand(hdc, &clipRect, TRUE);
+			ReleaseDC(NULL, hdc);
+		}
+        break;
+	case WM_NOTIFYICON:
+		if (wParam == ID_TASKTRAY) {
+			if (lParam == WM_RBUTTONUP) {
+				POINT pt;
+				GetCursorPos(&pt);
+
+				//ポップアップメニューを動的に作成
+				HMENU hPopup = CreatePopupMenu();
+				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_RECTMODE, TEXT("矩形選択"));
+				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_CLIENTMODE, TEXT("クライアント領域選択"));
+				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_SHIFTMODE, TEXT("ウインドウ領域選択"));
+				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_FULLSCREENMODE, TEXT("フルスクリーン選択"));
+				InsertMenu(hPopup, 0, MF_SEPARATOR, IDM_SEPARATOR, TEXT("-"));
+				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_EXIT, TEXT("終了"));
+				SetForegroundWindow(hWnd);
+				TrackPopupMenu(hPopup, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, NULL);
+				MSG msg;
+				if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+				DestroyMenu(hPopup);
+			}
+			break;
 		}
 		break;
 	case WM_DESTROY:
@@ -396,11 +556,11 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 {
 	HDC hdc;
 	RECT clipRect = {0, 0, 0, 0};
-	HBRUSH hBrush;
-	HPEN hPen;
-	HFONT hFont;
-	char szWidth[MAX_PATH], szHeight[MAX_PATH], szMode[MAX_PATH];
-	SIZE sizeWidth = {0,0}, sizeHeight={0,0};
+	HBRUSH hBrush, hPrevBrush;
+	HPEN hPen, hPrevPen;
+	HFONT hFont, hPrevFont;
+	char szWidth[MAX_PATH], szHeight[MAX_PATH], szMode[MAX_PATH], szFormat[MAX_PATH];
+	SIZE sizeWidth = {0,0}, sizeHeight={0,0}, sizeFormat={0,0};
 	char *lpszfilename;
 	int nFontHeight;
 	int nWidth, nHeight;
@@ -409,7 +569,7 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 	switch (msg)
 	{
 	case WM_LBUTTONUP:
-		//WINDOWMODEとCLIENTMODEはレイヤーウインドウのMoveWindowにより
+		//WINDOWMODE CLIENTMODE FULLSCREENMODEはレイヤーウインドウのMoveWindowにより
 		//ここにメッセージを受け取りますのでここでキャプチャします
 		pt.x = LOWORD(lParam);
 		pt.y = HIWORD(lParam);
@@ -442,16 +602,22 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		delete [] lpszfilename;
 		ReleaseDC(NULL, hdc);
 		SaveProfiles();
-		PostQuitMessage(0);
+		//PostQuitMessage(0);
+		
+		//IDLEMODEに
+		SwitchIdleMode();
 		break;
 	case WM_ERASEBKGND:
 		//ユーザーが操作・選択していることをユーザーに示す矩形はここで描画します
+		hPen = hPrevPen = NULL;
+		hBrush = hPrevBrush = NULL;
+		hFont = hPrevFont = NULL;
 		GetClientRect(hWnd, &clipRect);
 		hdc = GetDC(hWnd);
 		hBrush = CreateSolidBrush(BackgroundColor);
-		SelectObject(hdc, hBrush);
+		hPrevBrush = (HBRUSH)SelectObject(hdc, hBrush);
 		hPen = CreatePen(PS_DASH, 1, ForegroundColor);
-		SelectObject(hdc, hPen);
+		hPrevPen = (HPEN)SelectObject(hdc, hPen);
 
 		//矩形の描画
 		Rectangle(hdc, 0, 0, clipRect.right, clipRect.bottom);
@@ -467,7 +633,7 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 			FIXED_PITCH | FF_MODERN,
 			szFontName);
 
-		SelectObject(hdc, hFont);
+		hPrevFont = (HFONT)SelectObject(hdc, hFont);
 		nWidth  = clipRect.right  - clipRect.left;
 		nHeight = clipRect.bottom - clipRect.top;
 
@@ -475,21 +641,42 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		SecureZeroMemory(szWidth, MAX_PATH);
 		SecureZeroMemory(szHeight, MAX_PATH);
 		SecureZeroMemory(szMode, MAX_PATH);
+		SecureZeroMemory(szFormat, MAX_PATH);
 		wsprintf(szWidth, "W:%d", nWidth);
 		wsprintf(szHeight, "H:%d", nHeight);
-		if(SelectMode == RECTMODE){
+		switch(SelectMode){
+		case RECTMODE:
 			wsprintf(szMode, "RECTANGLE MODE");
-		}else if(SelectMode == WINDOWMODE){
+			break;
+		case WINDOWMODE:
 			wsprintf(szMode, "WINDOW MODE");
-		}else if(SelectMode == CLIENTMODE){
+			break;
+		case CLIENTMODE:
 			wsprintf(szMode, "CLIENT MODE");
-		}else if(SelectMode == FULLSCREENMODE){
+			break;
+		case FULLSCREENMODE:
 			wsprintf(szMode, "FULLSCREEN MODE");
+			break;
+		default:
+			wsprintf(szMode, "");
+			break;
+		}
+		switch(SaveFormat){
+		case IMAGE_BMP:
+			wsprintf(szFormat, "BMP");
+			break;
+		case IMAGE_JPEG:
+			wsprintf(szFormat, "JPEG(Q:%d)", nJpegQuality);
+			break;
+		case IMAGE_PNG:
+			wsprintf(szFormat, "PNG(O:%s)", (PngOptimize)?"YES":"NO");
+			break;
 		}
 
 		//サイズ情報の描画位置を決定（モード情報のY座標も）
 		GetTextExtentPoint32(hdc, szWidth, strlen(szWidth), &sizeWidth);
 		GetTextExtentPoint32(hdc, szHeight, strlen(szHeight), &sizeHeight);
+		GetTextExtentPoint32(hdc, szFormat, strlen(szFormat), &sizeFormat);
 		sizeWidth.cy *= 2;
 		sizeWidth.cx += nFontSize;
 		sizeWidth.cy += nFontSize;
@@ -505,6 +692,7 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		TextOut(hdc, clipRect.right - sizeHeight.cx + 1, clipRect.bottom - sizeHeight.cy + 1, (LPCTSTR)szHeight, strlen(szHeight));
 		TextOut(hdc, nFontSize + 1, clipRect.bottom - sizeHeight.cy + 1, (LPCTSTR)szMode, strlen(szMode));
 		TextOut(hdc, nFontSize + 1, nFontSize + 1, (LPCTSTR)szAppName, strlen(szAppName));
+		TextOut(hdc, clipRect.right - sizeFormat.cx - nFontSize + 1, nFontSize + 1, (LPCTSTR)szFormat, strlen(szFormat));
 
 		//本文
 		SetTextColor(hdc, ForegroundColor);
@@ -512,11 +700,18 @@ LRESULT CALLBACK LayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 		TextOut(hdc, clipRect.right - sizeHeight.cx, clipRect.bottom - sizeHeight.cy, (LPCTSTR)szHeight, strlen(szHeight));
 		TextOut(hdc, nFontSize, clipRect.bottom - sizeHeight.cy, (LPCTSTR)szMode, strlen(szMode));
 		TextOut(hdc, nFontSize, nFontSize, (LPCTSTR)szAppName, strlen(szAppName));
+		TextOut(hdc, clipRect.right - sizeFormat.cx - nFontSize, nFontSize, (LPCTSTR)szFormat, strlen(szFormat));
 
 		//後始末
+		SelectObject(hdc, hPrevPen);
+		SelectObject(hdc, hPrevBrush);
+		SelectObject(hdc, hPrevFont);
 		DeleteObject(hPen);
 		DeleteObject(hBrush);
 		DeleteObject(hFont);
+		hPen = NULL;
+		hBrush = NULL;
+		hFont = NULL;
 		ReleaseDC(hWnd, hdc);
 		break;
 	default:
@@ -965,8 +1160,8 @@ BOOL LoadProfiles(void)
 	}
 	if(nFontSize < 5){
 		nFontSize = 5;
-	}else if(nFontSize > 64){
-		nFontSize = 64;
+	}else if(nFontSize > 32){
+		nFontSize = 32;
 	}
 	if(uLastNumber > 9999){
 		uLastNumber = 0;
@@ -1015,3 +1210,218 @@ BOOL SaveProfiles(void)
 	return TRUE;
 }
 
+///チップウインドウを登録します
+///@param hInstance アプリケーションのHINSTANCE
+ATOM RegisterTipLayeredWindow(HINSTANCE hInstance)
+{
+	WNDCLASS wc;
+
+	wc.style         = CS_HREDRAW | CS_VREDRAW;
+	wc.lpfnWndProc   = TipLayeredWndProc;
+	wc.cbClsExtra    = 0;
+	wc.cbWndExtra    = 0;
+	wc.hInstance     = hInstance;
+	wc.hIcon         = (HICON)LoadImage(NULL, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
+	wc.hCursor       = LoadCursor(NULL, IDC_CROSS);
+	wc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+	wc.lpszMenuName  = 0;
+	wc.lpszClassName = szTipLayeredWindowClass;
+
+	return RegisterClass(&wc);
+}
+
+//手抜きチップウインドウ用文言集
+LPCTSTR ppszTips[]={
+	"ドラッグアンドドロップ : [RECT MODE]始点終点の矩形領域をキャプチャします",
+	"Ctrlボダン : [CLIENT MODE]ウインドウ選択後左クリックでクライアント領域をキャプチャします",
+	"Shiftボタン : [WINDOW MODE]ウインドウ選択後左クリックでウインドウ領域をキャプチャします",
+	"Altボタン : [FULLSCREEN MODE]左クリックで画面全体をキャプチャします",
+	"Spaceボタン : [RECT MODE]に戻ります",
+	"Escボタン : キャプチャを中断します。再開はトレイアイコンから",
+	"",
+	"アイコンが十字の時は各モード中です",
+	"現在の選択領域が邪魔で他の領域が選択できない時は再度各ボタンを押してみてください",
+	"アプリケーションの終了は（モード中は中断後に）タスクトレイから[終了]を選択してください"
+};
+
+const unsigned int uTipsLength = 10;
+
+LRESULT CALLBACK TipLayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	HDC hdc;
+	RECT clipRect = {0, 0, 0, 0};
+	HBRUSH hBrush, hPrevBrush;
+	HPEN hPen, hPrevPen;
+	HFONT hFont, hPrevFont;
+	int nFontHeight;
+
+	switch (msg)
+	{
+	case WM_ERASEBKGND:
+		hPen = hPrevPen = NULL;
+		hBrush = hPrevBrush = NULL;
+		hFont = hPrevFont = NULL;
+		GetClientRect(hWnd, &clipRect);
+		hdc = GetDC(hWnd);
+		hBrush = CreateSolidBrush(0x3F3FFF);
+		hPrevBrush = (HBRUSH)SelectObject(hdc, hBrush);
+		hPen = CreatePen(PS_DASH, 1, ForegroundColor);
+		hPrevPen = (HPEN)SelectObject(hdc, hPen);
+
+		//矩形の描画
+		Rectangle(hdc, 0, 0, clipRect.right, clipRect.bottom);
+
+		//フォントを作成しサイズなどから描画位置を決定
+		nFontHeight = -MulDiv(nFontSize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+		hFont = CreateFont(nFontHeight, 0, 0, 0,
+			FW_REGULAR, FALSE, FALSE, FALSE,
+			DEFAULT_CHARSET,
+			OUT_DEFAULT_PRECIS,
+			CLIP_DEFAULT_PRECIS,
+			PROOF_QUALITY,
+			FIXED_PITCH | FF_MODERN,
+			"Meiryo UI");
+		hPrevFont = (HFONT)SelectObject(hdc, hFont);
+
+		//ここから情報を描画
+		SetBkMode(hdc, TRANSPARENT);
+
+		for(unsigned int i=0;i<uTipsLength;i++){
+			//影付け
+			SetTextColor(hdc, ShadowColor);
+			TextOut(hdc, nFontSize + 1, nFontSize * (2 * (i + 2) + 1) + 1, (LPCTSTR)ppszTips[i], lstrlen(ppszTips[i]));
+
+			//本文
+			SetTextColor(hdc, ForegroundColor);
+			TextOut(hdc, nFontSize, nFontSize * (2 * (i + 2) + 1), (LPCTSTR)ppszTips[i], lstrlen(ppszTips[i]));
+		}
+		
+		//影付け
+		SetTextColor(hdc, ShadowColor);
+		TextOut(hdc, nFontSize + 1, nFontSize + 1, (LPCTSTR)szAppName, lstrlen(szAppName));
+		
+		//本文
+		SetTextColor(hdc, ForegroundColor);
+		TextOut(hdc, nFontSize, nFontSize, (LPCTSTR)szAppName, lstrlen(szAppName));
+		
+		//後始末
+		SelectObject(hdc, hPrevPen);
+		SelectObject(hdc, hPrevBrush);
+		SelectObject(hdc, hPrevFont);
+		DeleteObject(hPen);
+		DeleteObject(hBrush);
+		DeleteObject(hFont);
+		hPen = NULL;
+		hBrush = NULL;
+		hFont = NULL;
+		ReleaseDC(hWnd, hdc);
+		break;
+
+	default:
+		return DefWindowProc(hWnd, msg, wParam, lParam);
+	}
+	return 0;
+}
+
+//タスクトレイに登録します
+BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip)
+{
+	NOTIFYICONDATA nid;
+
+	SecureZeroMemory(&nid, sizeof(NOTIFYICONDATA));
+	nid.cbSize = sizeof(NOTIFYICONDATA);
+	nid.hWnd = hWnd;
+	nid.uID = uID;
+	nid.hIcon = hIcon;
+	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+	nid.uCallbackMessage = WM_NOTIFYICON;
+	//StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), szTip); //safe copy
+	
+	if(szTip != NULL){
+		size_t n = 0;
+		if(strlen(szTip) >= 64)
+			n = 63;
+		else
+			n = strlen(szTip);
+		strncpy(nid.szTip, szTip, n);
+	}
+
+	return Shell_NotifyIcon(NIM_ADD, &nid);
+}
+
+//タスクトレイから削除します
+BOOL DeleteNotifyIcon(HWND hWnd, unsigned int uID)
+{
+	NOTIFYICONDATA nid;
+
+	SecureZeroMemory(&nid, sizeof(NOTIFYICONDATA));
+	nid.cbSize = sizeof(NOTIFYICONDATA);
+	nid.hWnd = hWnd;
+	nid.uID = uID;
+	nid.uFlags = 0;
+
+	return Shell_NotifyIcon(NIM_DELETE, &nid);
+}
+
+//アイドルモードに移行します
+//複数箇所ありましたのでまとめました
+//他のモード移行もまとめた方がよさそうですね
+BOOL SwitchIdleMode(void)
+{
+	SelectMode = IDLEMODE;
+	ShowWindow(hLayeredWnd, SW_HIDE);
+	ShowWindow(hMainWnd, SW_HIDE);
+	if(uIDTimer != 0){
+		KillTimer(hMainWnd, uIDTimer);
+		uIDTimer = 0;
+	}
+	return TRUE;
+}
+
+//チップウインドウのサイズを計算します
+// @param hWnd チップウインドウハンドル
+// @param lpSize 計算されたSIZEを受け取るポインタ
+BOOL CalcTipWindowSize(HWND hWnd, SIZE *lpSize){
+	HDC hdc;
+	HFONT hFont, hPrevFont;
+	int nFontHeight;
+	SIZE size, sizeLongest;
+
+	if(lpSize == NULL){
+		return FALSE;
+	}
+
+	hFont = hPrevFont = NULL;
+	hdc = GetDC(hWnd);
+	nFontHeight = -MulDiv(nFontSize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+	hFont = CreateFont(nFontHeight, 0, 0, 0,
+		FW_REGULAR, FALSE, FALSE, FALSE,
+		DEFAULT_CHARSET,
+		OUT_DEFAULT_PRECIS,
+		CLIP_DEFAULT_PRECIS,
+		PROOF_QUALITY,
+		FIXED_PITCH | FF_MODERN,
+		"Meiryo UI");
+	hPrevFont = (HFONT)SelectObject(hdc, hFont);
+
+	sizeLongest.cx = sizeLongest.cy = 0;
+	for(unsigned int i=0;i<uTipsLength;i++){
+		size.cx = size.cy = 0;
+		GetTextExtentPoint32(hdc, (LPCTSTR)ppszTips[i], lstrlen(ppszTips[i]), &size);
+		if(size.cx > sizeLongest.cx)
+			sizeLongest.cx = size.cx;
+	}
+	SelectObject(hdc, hPrevFont);
+	DeleteObject(hFont);
+	hFont = NULL;
+	ReleaseDC(hWnd, hdc);
+
+	sizeLongest.cy = nFontSize * (2 * (uTipsLength + 2) + 1);
+
+	sizeLongest.cx += (nFontSize * 2);
+	sizeLongest.cy += (nFontSize * 2);
+
+	*lpSize = sizeLongest;
+
+	return TRUE;
+}

@@ -20,7 +20,7 @@ LIBJPEGLIB = D:/lib/mozjpeg/sharedlib
 LIBPNGDLL = libpng12.dll
 LIBJPEGDLL = libjpeg-62.dll
 
-CXXFLAGS = -I$(ZLIBINC) -I$(LIBPNGINC) -I$(LIBJPEGINC) -Wall -O3 -DUSE_MOZJPEG #-D_DEBUG
+CXXFLAGS = -I$(ZLIBINC) -I$(LIBPNGINC) -I$(LIBJPEGINC) --input-charset=utf-8 --exec-charset=CP932 -Wall -O3 -DUSE_MOZJPEG #-D_DEBUG
 LIBS = -L$(ZLIBLIB) -L$(LIBPNGLIB) -L$(LIBJPEGLIB) -lpng -lz -ljpeg -lrpcrt4 -mwindows
 
 $(TARGET): $(OBJS) dllcopy

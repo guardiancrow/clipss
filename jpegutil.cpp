@@ -5,7 +5,7 @@
 //ということでCopyrightもModificationsとしておきます
 //
 //Modifications:
-//Copyright (C) 2014, guardiancrow
+//Copyright (C) 2014 - 2015, guardiancrow
 
 #include "jpegutil.h"
 
@@ -352,12 +352,12 @@ int DIBtoJPEG(const char *filename, void* lpBInfo, void* lpBm, int nQuality)
 
 	cinfo.in_color_space = JCS_RGB;
 
-#ifdef USE_MOZJPEG
+//#ifdef USE_MOZJPEG
 	//cinfo.use_moz_defaults = TRUE;
-	if (jpeg_c_bool_param_supported(&cinfo, JBOOLEAN_USE_MOZ_DEFAULTS)){
-		jpeg_c_set_bool_param(&cinfo, JBOOLEAN_USE_MOZ_DEFAULTS, TRUE);
-	}
-#endif
+//	if (jpeg_c_bool_param_supported(&cinfo, JBOOLEAN_USE_MOZ_DEFAULTS)){
+//		jpeg_c_set_bool_param(&cinfo, JBOOLEAN_USE_MOZ_DEFAULTS, TRUE);
+//	}
+//#endif
 	jpeg_set_defaults(&cinfo);
 
 	output_file = fopen(filename, "wb");

@@ -2,7 +2,7 @@
 
 ## 概要
 
-clipssはWindows用画面キャプチャソフトウエアです
+　clipssはWindows用画面キャプチャソフトウエアです
 
 ## 特徴
 

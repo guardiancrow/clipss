@@ -101,13 +101,13 @@ msysを使わない場合はmozjpegのみが使えますので```USE_MOZJPEG```�
 
 - ```./configure```で作成される```jconfig.h```に（```#undef```されているはずの）```#define HAVE_PROTOTYPES 1```を付け加え有効にしてみてください。書き換えても上書きされる場合がありますので、個別に```make```すると解消されるかもしれません（patchが使えれば良いのですが・・・）
 
-
-    5c5,6
-    < #undef HAVE_PROTOTYPES
-    ---
-    > //#undef HAVE_PROTOTYPES
-    > #define HAVE_PROTOTYPES 1
-
+<pre><code>
+5c5,6
+< #undef HAVE_PROTOTYPES
+---
+> //#undef HAVE_PROTOTYPES
+> #define HAVE_PROTOTYPES 1
+</code></pre>
 
 **ということもあって、msys環境の構築とmozjpegの利用を推奨します**
 

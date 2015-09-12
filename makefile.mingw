@@ -1,0 +1,100 @@
+### for MinGW32+cmd.exe
+### パスは適宜書き直してください
+### Copyright (C) 2014 - 2015, guardiancrow
+
+### ここから適宜変更
+# zlib libpng-1.6.x mozjpeg のソースコードを展開したディレクトリを指定してください
+ZLIBDIR = D:\src\zlib
+LIBPNGDIR = D:\src\libpng16
+LIBJPEGDIR = D:\src\mozjpeg
+### ここまで適宜変更
+
+
+CXX = mingw32-g++
+WINDRES = windres
+SRC = clipss.cpp pngutil.cpp jpegutil.cpp optiondialog.cpp
+RC = clipss_res.rc
+
+OUTPUT_DIR = .\out
+RELEASE_DIR = .\release
+OBJS = $(SRC:%.cpp=$(OUTPUT_DIR)\\%.o)
+RES = $(RC:%.rc=$(OUTPUT_DIR)\\%.o)
+TARGET = $(RELEASE_DIR)\clipss.exe
+
+ZLIBINC = $(ZLIBDIR)
+LIBPNGINC = $(LIBPNGDIR)
+LIBJPEGINC = $(LIBJPEGDIR)
+
+ZLIBLIB = $(ZLIBDIR)
+LIBPNGDLL = libpng16.dll
+LIBPNGBUILDDIR = $(OUTPUT_DIR)\libpngbuild
+LIBPNGLIB = $(LIBPNGBUILDDIR)
+
+LIBJPEGBUILDDIR = $(OUTPUT_DIR)\libjpegbuild
+LIBJPEGLIB = $(LIBJPEGBUILDDIR)\sharedlib
+LIBJPEGDLL = libjpeg-62.dll
+CXXFLAGS = -I$(ZLIBINC) -I$(LIBPNGINC) -I$(LIBPNGBUILDDIR) -I$(LIBJPEGINC) -I$(LIBJPEGBUILDDIR) --input-charset=utf-8 --exec-charset=CP932 -Wall -O3 -DUSE_MOZJPEG
+LIBS = -L$(ZLIBLIB) -L$(LIBPNGLIB) -L$(LIBJPEGLIB) -lpng16.dll -lz -ljpeg -lrpcrt4 -lshlwapi -mwindows
+
+
+##########
+##########
+
+
+define create_dir
+	@if not exist $1 mkdir $1
+endef
+
+all: libpng libjpeg exe readme
+
+exe: $(TARGET)
+
+$(TARGET): $(OBJS) $(RES)
+	$(call create_dir, $(RELEASE_DIR))
+	$(CXX) $(OBJS) $(RES) $(LIBS) -o $@
+
+$(OUTPUT_DIR)\\%.o: %.cpp
+	$(call create_dir, $(OUTPUT_DIR))
+	$(CXX) $(CXXFLAGS) -o $@ -c $<
+
+$(RES): $(RC) resource.h
+	$(call create_dir, $(OUTPUT_DIR))
+	$(WINDRES) $(RC) $(RES)
+
+readme:
+	copy clipss_ini_readme.txt $(RELEASE_DIR)\clipss_ini_readme.txt
+	copy readme_binary.txt $(RELEASE_DIR)\readme.txt
+
+libpng:
+	$(call create_dir, $(RELEASE_DIR))
+	$(call create_dir, $(OUTPUT_DIR))
+	$(call create_dir, $(LIBPNGBUILDDIR))
+	@cd $(ZLIBDIR) & mingw32-make -f win32\Makefile.gcc libz.a
+	@cd $(LIBPNGBUILDDIR) & cmake $(LIBPNGDIR) -G "MinGW Makefiles" -DZLIB_INCLUDE_DIR=$(ZLIBDIR) -DZLIB_LIBRARY=$(ZLIBDIR)\libz.a -DCMAKE_POLICY_DEFAULT_CMP0026=OLD & mingw32-make png16
+	copy $(LIBPNGLIB)\$(LIBPNGDLL) $(RELEASE_DIR)\$(LIBPNGDLL)
+	copy $(ZLIBDIR)\README $(RELEASE_DIR)\zlib-README.txt
+	copy $(LIBPNGDIR)\LICENSE $(RELEASE_DIR)\libpng-LICENSE.txt
+
+libjpeg:
+	$(call create_dir, $(RELEASE_DIR))
+	$(call create_dir, $(OUTPUT_DIR))
+	$(call create_dir, $(LIBJPEGBUILDDIR))
+	@cd $(LIBJPEGBUILDDIR) & cmake $(LIBJPEGDIR) -G "MinGW Makefiles" & mingw32-make jpeg
+	copy $(LIBJPEGDIR)\LICENSE.txt $(RELEASE_DIR)\mozjpeg-LICENSE.txt
+	copy $(LIBJPEGLIB)\$(LIBJPEGDLL) $(RELEASE_DIR)\$(LIBJPEGDLL)
+
+clean:
+	del $(TARGET)
+	del $(OBJS)
+	del $(RES)
+	del $(RELEASE_DIR)\clipss_ini_readme.txt
+	del $(RELEASE_DIR)\readme.txt
+	del $(RELEASE_DIR)\$(LIBPNGDLL)
+	del $(RELEASE_DIR)\$(LIBJPEGDLL)
+	del $(RELEASE_DIR)\zlib-README.txt
+	del $(RELEASE_DIR)\libpng-LICENSE.txt
+	@cd $(ZLIBDIR) & mingw32-make clean -f win32\Makefile.gcc RM=del
+	rmdir /S /Q $(LIBPNGBUILDDIR)
+	rmdir /S /Q $(LIBJPEGBUILDDIR)
+	del $(RELEASE_DIR)\mozjpeg-LICENSE.txt
+

@@ -1,32 +1,33 @@
 //clipssはWindows用画面キャプチャソフトウエアです
 //詳細は添付ドキュメントをご覧ください
+//BOM付きUTF-8での保存を推奨します
 //
 //Copyright (C) 2014 - 2015, guardiancrow
 
 #define WIN32_LEAN_AND_MEAN
+
 #include <windows.h>
 #include <tchar.h>
-#include <stdlib.h>	//_splitpath
+//#include <stdlib.h>	//_splitpath
 #include <rpc.h>	//uuid
 #include <shellapi.h>
+//#include <shlwapi.h>
+//#include <shlobj.h>
 
 #include <iostream>
 #include <fstream>
 #include <string>
 
+#include "clipssdef.h"
+#include "resource.h"
 #include "strutil.hpp"
 #include "pngutil.h"
 #include "jpegutil.h"
+#include "optiondialog.h"
 
-#define IDM_EXIT				101
-#define IDM_ABOUT				102
-#define IDM_RECTMODE			103
-#define IDM_CLIENTMODE			104
-#define	IDM_SHIFTMODE			105
-#define	IDM_FULLSCREENMODE		106
-#define IDM_SEPARATOR			200
-#define WM_NOTIFYICON (WM_USER+123)
-#define ID_TASKTRAY 0
+//#define WM_NOTIFYICON (WM_USER+123)
+//#define ID_TASKTRAY 0
+
 
 using namespace std;
 
@@ -34,6 +35,7 @@ using namespace std;
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK LayeredWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK TipLayeredWndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK OptionDialogProc(HWND, UINT, WPARAM, LPARAM);
 BOOL CALLBACK EnumWindowsWindowRectProc(HWND hWnd, LPARAM lParam);
 BOOL CALLBACK EnumWindowsClientRectProc(HWND hWnd, LPARAM lParam);
 
@@ -49,16 +51,12 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize);
 BOOL GetTopWindowRect(LPRECT lprect, WORD x, WORD y);
 BOOL GetTopClientRect(LPRECT lprect, WORD x, WORD y);
 BOOL SetTopWindowPos(WORD x, WORD y);
-
-BOOL LoadProfiles(void);
-BOOL SaveProfiles(void);
-
-void GetProcessDirectory(char *pDir, unsigned int uBufSize);
-
 BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip);
 BOOL DeleteNotifyIcon(HWND hWnd, unsigned int uID);
 BOOL SwitchIdleMode(void);
 BOOL CalcTipWindowSize(HWND hWnd, SIZE *lpSize);
+BOOL BuildPopupMenu(HMENU *pHPopup);
+
 
 //Global Params
 //iniに読み書きする設定用
@@ -137,46 +135,11 @@ HWND hWndRect;
 ///タイマーのID：グローバル変数
 UINT_PTR uIDTimer;
 
+///現在のインスタンス
+HINSTANCE hInst;
 
-///各クリップモードの定義です
-enum CLIPSS_MODE{
-	RECTMODE=0,
-	WINDOWMODE,
-	CLIENTMODE,
-	FULLSCREENMODE,
-	IDLEMODE,
-	READYMODE//DISABLEMODE
-};
-static CLIPSS_MODE SelectMode = READYMODE;//DISABLEMODE;
-
-///保存画像形式の定義です
-enum IMAGEFORMAT{
-	IMAGE_BMP=0,
-	IMAGE_JPEG,
-	IMAGE_PNG
-};
-
-///ファイル接尾語モードの定義です
-enum POSTFIX_MODE{
-	///無し(上書き)
-	POSTFIX_NONE=0,
-	///連番
-	POSTFIX_CONSECUTIVENUMBER,
-	///日付時刻
-	POSTFIX_DATETIME,
-	///ハッシュ
-	POSTFIX_HASH
-};
-
-
-//Macros
-
-/// HWNDがオーナーウインドウかどうかを検査します
-#define IsWindowOwner(h) (GetWindow(h,GW_OWNER) == NULL)
-#ifdef __MINGW32__
-/// MinGWではSecureZeroMemoryは定義されていません
-#define SecureZeroMemory(p,s) RtlFillMemory((p),(s),0)
-#endif
+///現在のキャプチャモード
+static CLIPSS_MODE SelectMode = READYMODE;
 
 
 ///RECTを検査し、上下・左右の大小を揃えます
@@ -252,6 +215,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 {
 	MSG msg;
 	int x, y, w, h;
+
+	hInst = hInstance;
 
 	//二重起動を抑止します
 	//SECURITY_ATTRIBUTESがNULL（他ユーザーの使用は想定しない）
@@ -382,7 +347,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			CalcTipWindowSize(hTipWnd, &size);
 			MoveWindow(hTipWnd,
 				LOWORD(lParam) + 24, HIWORD(lParam) + 24,
-			//	560, 280, TRUE);
 				size.cx, size.cy, TRUE);
 			ShowWindow(hTipWnd, SW_SHOW);
 		}else{
@@ -407,7 +371,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		//選択矩形保存の際はここに処理が来ます
 		clipRect.right = LOWORD(lParam) + nOffSetX;
 		clipRect.bottom = HIWORD(lParam) + nOffSetY;
-		SelectMode = READYMODE;//DISABLEMODE;
+		SelectMode = READYMODE;
 		ReleaseCapture();
 		hdc = GetDC(NULL);
 
@@ -484,7 +448,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				GetTopClientRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
 				ShowWindow(hWnd, SW_SHOW);
 				break;
-			case IDM_SHIFTMODE:
+			case IDM_WINDOWMODE:
 				SelectMode = WINDOWMODE;
 				GetCursorPos(&pt);
 				GetTopWindowRect(&clipRect, (WORD)pt.x, (WORD)pt.y);
@@ -497,6 +461,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 				clipRect.right = GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
 				clipRect.bottom = GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
 				ShowWindow(hWnd, SW_SHOW);
+				break;
+			case IDM_OPENFOLDER:
+				ShellExecute(hWnd, "open", szSaveDir, NULL, NULL, SW_SHOWNORMAL);
+				break;
+			case IDM_OPTION:
+				DialogBox(hInst, MAKEINTRESOURCE(IDD_OPTIONDIALOG), hWnd, OptionDialogProc);
 				break;
 			case IDM_ABOUT:
                 break;
@@ -518,17 +488,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_NOTIFYICON:
 		if (wParam == ID_TASKTRAY) {
 			if (lParam == WM_RBUTTONUP) {
-				POINT pt;
+				POINT pt={0};
 				GetCursorPos(&pt);
 
-				//ポップアップメニューを動的に作成
-				HMENU hPopup = CreatePopupMenu();
-				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_RECTMODE, TEXT("矩形選択"));
-				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_CLIENTMODE, TEXT("クライアント領域選択"));
-				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_SHIFTMODE, TEXT("ウインドウ領域選択"));
-				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_FULLSCREENMODE, TEXT("フルスクリーン選択"));
-				InsertMenu(hPopup, 0, MF_SEPARATOR, IDM_SEPARATOR, TEXT("-"));
-				InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_EXIT, TEXT("終了"));
+				HMENU hPopup = NULL;
+				if(!BuildPopupMenu(&hPopup) || hPopup == NULL){
+					break;
+				}
 				SetForegroundWindow(hWnd);
 				TrackPopupMenu(hPopup, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, NULL);
 				MSG msg;
@@ -819,6 +785,7 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize)
 	}
 
 	str = szSaveDir;
+	str += "\\";
 	str += "clipss";
 
 	//sprintfなんてなかった
@@ -829,6 +796,7 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize)
 		wsprintf(szNumber, "%04u", uLastNumber);
 		str += szNumber;
 		uLastNumber++;
+		SecureZeroMemory(szNumber, 4);
 	}else if(PostfixMode == POSTFIX_DATETIME){
 		str += "_";
 		GetLocalTime(&st);
@@ -836,12 +804,15 @@ BOOL BuildSaveFileName(char *filename, unsigned int uBufSize)
 		SecureZeroMemory(szNumber, 14);
 		wsprintf(szNumber, "%04u%02u%02u%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 		str += szNumber;
+		SecureZeroMemory(szNumber, 14);
 	}else if(PostfixMode == POSTFIX_HASH){
+		lpUuidString = NULL;
 		UuidCreate(&uuid);
 		UuidToString(&uuid, &lpUuidString);
 		str += "_";
 		str += (char*)lpUuidString;
 		RpcStringFree(&lpUuidString);
+		lpUuidString = NULL;
 	}
 	str += ".";
 	str += strExt;
@@ -1066,6 +1037,13 @@ BOOL GetTopClientRect(LPRECT lprect, WORD x, WORD y)
 		rect.right += pt.x;
 		rect.top += pt.y;
 		rect.bottom += pt.y;
+
+		//１ドット狭める
+		//Windows10で縁が取れるのでこれが正解？
+		rect.left++;
+		rect.top++;
+		rect.right--;
+		rect.bottom--;
 	}
 
 	*lprect = rect;
@@ -1090,125 +1068,6 @@ BOOL SetTopWindowPos(WORD x, WORD y)
 	return FALSE;
 }
 
-
-///アプリケーションのあるディレクトリ文字列を取得します
-///
-///@param pDir 文字列へのポインタ
-///@param uBufSize pDirのバッファサイズ
-void GetProcessDirectory(char *pDir, unsigned int uBufSize)
-{
-	char *lpDir = new char[MAX_PATH+1];
-	char szProcessPath[MAX_PATH+1];
-	char szDrive[MAX_PATH+1];
-	char szDir[MAX_PATH+1];
-
-	SecureZeroMemory(lpDir, MAX_PATH);
-	SecureZeroMemory(szProcessPath, MAX_PATH);
-	SecureZeroMemory(szDrive, MAX_PATH);
-	SecureZeroMemory(szDir, MAX_PATH);
-	GetModuleFileName(NULL, szProcessPath, MAX_PATH);
-
-	//PathRemoveFileSpec() はshlwapi.libが要るので使用せず・・・
-	_splitpath(szProcessPath, szDrive, szDir, NULL, NULL);
-	_makepath(lpDir, szDrive, szDir, NULL, NULL);
-
-	if(uBufSize < MAX_PATH){
-		memcpy(pDir, lpDir, uBufSize);
-	}else{
-		memcpy(pDir, lpDir, MAX_PATH);
-	}
-	delete [] lpDir;
-}
-
-
-/// アプリケーションの設定を読み込みます
-BOOL LoadProfiles(void)
-{
-	SaveFormat = 0;
-	PngOptimize = 0;
-	PullWindow = 0;
-	char *lpProcessDir = new char[MAX_PATH+1];
-	GetProcessDirectory(lpProcessDir, MAX_PATH);
-	string strINIFileName = lpProcessDir;
-	strINIFileName += "clipss.ini";
-
-	SecureZeroMemory(szSaveDir, MAX_PATH);
-	SecureZeroMemory(szTempDir, MAX_PATH);
-	SecureZeroMemory(szFontName, MAX_PATH);
-	
-	GetPrivateProfileString(_T("clipss"), _T("SaveDir"), lpProcessDir, szSaveDir, MAX_PATH, strINIFileName.c_str());
-	GetPrivateProfileString(_T("clipss"), _T("TempDir"), lpProcessDir, szTempDir, MAX_PATH, strINIFileName.c_str());
-	SaveFormat = GetPrivateProfileInt(_T("clipss"), _T("SaveFormat"), 1, strINIFileName.c_str());
-	PngOptimize = GetPrivateProfileInt(_T("clipss"), _T("PngOptimize"), 0, strINIFileName.c_str());
-	nJpegQuality = GetPrivateProfileInt(_T("clipss"), _T("JpegQuality"), 75, strINIFileName.c_str());
-	PullWindow = GetPrivateProfileInt(_T("clipss"), _T("PullWindow"), 1, strINIFileName.c_str());
-	PostfixMode = GetPrivateProfileInt(_T("clipss"), _T("PostfixMode"), 1, strINIFileName.c_str());
-	GetPrivateProfileString(_T("clipss"), _T("FontName"), _T("Verdana"), szFontName, MAX_PATH, strINIFileName.c_str());
-	nFontSize = GetPrivateProfileInt(_T("clipss"), _T("FontSize"), 10, strINIFileName.c_str());
-	ForegroundColor = GetPrivateProfileInt(_T("clipss"), _T("ForegroundColor"), 0xFFFFFF, strINIFileName.c_str());
-	BackgroundColor = GetPrivateProfileInt(_T("clipss"), _T("BackgroundColor"), 0xFF3F3F, strINIFileName.c_str());
-	ShadowColor = GetPrivateProfileInt(_T("clipss"), _T("ShadowColor"), 0x000000, strINIFileName.c_str());
-	uLastNumber = GetPrivateProfileInt(_T("clipss"), _T("LastNumber"), 0, strINIFileName.c_str());
-	ICMMode = GetPrivateProfileInt(_T("clipss"), _T("ICMMode"), 1, strINIFileName.c_str());
-
-	delete [] lpProcessDir;
-
-	if(nJpegQuality < 0){
-		nJpegQuality = 0;
-	}else if(nJpegQuality > 100){
-		nJpegQuality = 100;
-	}
-	if(nFontSize < 5){
-		nFontSize = 5;
-	}else if(nFontSize > 32){
-		nFontSize = 32;
-	}
-	if(uLastNumber > 9999){
-		uLastNumber = 0;
-	}
-
-	return TRUE;
-}
-
-
-///アプリケーションの設定を保存します
-BOOL SaveProfiles(void)
-{
-	string strSaveFormat = toString(SaveFormat);
-	string strPngOptimize = toString(PngOptimize);
-	string strJpegQuality = toString(nJpegQuality);
-	string strPullWindow = toString(PullWindow);
-	string strPostfixMode = toString(PostfixMode);
-	string strFontSize = toString(nFontSize);
-	string strForegroundColor = toString(ForegroundColor);
-	string strBackgroundColor = toString(BackgroundColor);
-	string strShadowColor = toString(ShadowColor);
-	string strLastNumber = toString(uLastNumber);
-	string strICMMode = toString(ICMMode);
-
-	char *lpProcessDir = new char[MAX_PATH + 1];
-	GetProcessDirectory(lpProcessDir, MAX_PATH);
-	string strINIFileName = lpProcessDir;
-	strINIFileName += "clipss.ini";
-	delete[] lpProcessDir;
-
-	WritePrivateProfileString(_T("clipss"), _T("SaveDir"), szSaveDir, strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("TempDir"), szTempDir, strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("SaveFormat"), strSaveFormat.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("PngOptimize"), strPngOptimize.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("JpegQuality"), strJpegQuality.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("PullWindow"), strPullWindow.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("PostfixMode"), strPostfixMode.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("FontName"), szFontName, strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("FontSize"), strFontSize.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("ForegroundColor"), strForegroundColor.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("BackgroundColor"), strBackgroundColor.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("ShadowColor"), strShadowColor.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("LastNumber"), strLastNumber.c_str(), strINIFileName.c_str());
-	WritePrivateProfileString(_T("clipss"), _T("ICMMode"), strICMMode.c_str(), strINIFileName.c_str());
-
-	return TRUE;
-}
 
 ///チップウインドウを登録します
 ///@param hInstance アプリケーションのHINSTANCE
@@ -1425,3 +1284,45 @@ BOOL CalcTipWindowSize(HWND hWnd, SIZE *lpSize){
 
 	return TRUE;
 }
+
+BOOL BuildPopupMenu(HMENU *pHPopup)
+{
+	if(pHPopup == NULL){
+		return FALSE;
+	}
+
+	TCHAR szStr[STRINGBUFFERSIZE+1];
+	
+	//ポップアップメニューを動的に作成
+	HMENU hPopup = CreatePopupMenu();
+	
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_RECTMODE, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_RECTMODE, szStr);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_WINDOWMODE, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_WINDOWMODE, szStr);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_CLIENTMODE, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_CLIENTMODE, szStr);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_FULLSCREENMODE, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_FULLSCREENMODE, szStr);
+	InsertMenu(hPopup, 0, MF_SEPARATOR, IDM_SEPARATOR, NULL);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_OPENFOLDER, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_OPENFOLDER, szStr);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_OPTION, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_OPTION, szStr);
+	InsertMenu(hPopup, 0, MF_SEPARATOR, IDM_SEPARATOR, NULL);
+	SecureZeroMemory(szStr, sizeof(szStr));
+	LoadString(hInst, IDS_MENU_EXIT, szStr, STRINGBUFFERSIZE);
+	InsertMenu(hPopup, 0, MF_BYCOMMAND | MF_STRING, IDM_EXIT, szStr);
+
+	SecureZeroMemory(szStr, sizeof(szStr));
+	*pHPopup = hPopup;
+
+	return TRUE;
+}
+

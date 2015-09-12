@@ -3,6 +3,10 @@
 #include "pngutil.h"
 #include "strutil.hpp"
 
+#if (PNG_LIBPNG_VER_MINOR >= 5) && (PNG_LIBPNG_VER_MAJOR == 1)
+#include "zlib.h"
+#endif
+
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -32,14 +36,22 @@ const int pngfilters[] = {
 ///普通書き出し用
 static void writefn_write(png_structp png_ptr, png_bytep pdata, png_size_t length)
 {
+#if (PNG_LIBPNG_VER_MINOR == 2) && (PNG_LIBPNG_VER_MAJOR == 1)
 	ofstream *ofs =  reinterpret_cast<ofstream*>(png_ptr->io_ptr);
+#else
+	ofstream *ofs =  reinterpret_cast<ofstream*>(png_get_io_ptr(png_ptr));
+#endif
 	ofs->write((char*)pdata, length);
 }
 
 ///ファイルに書き込まない時用
 static void writefn_seek(png_structp png_ptr, png_bytep pdata, png_size_t length)
 {
+#if (PNG_LIBPNG_VER_MINOR == 2) && (PNG_LIBPNG_VER_MAJOR == 1)
 	unsigned int *nCount = reinterpret_cast<unsigned int*>(png_ptr->io_ptr);
+#else
+	unsigned int *nCount = reinterpret_cast<unsigned int*>(png_get_io_ptr(png_ptr));
+#endif
 	(*nCount) += length;
 }
 

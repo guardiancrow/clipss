@@ -16,6 +16,7 @@
 - マルチディスプレイサポート
 - カラーマネジメントサポート
 - 最適化されたJPEGとPNGファイルの出力サポート
+- PNG出力においてzopfliでの高圧縮をサポート
 - 画像データにExifやその他のメタデータを埋め込まない
 
 　スクリーンショットを撮って公開する場合の一般的なプロセス｛「キャプチャ」 -> 「プライバシーデータの破棄」 -> 「投稿用に再圧縮」｝ -> 「投稿」の｛｝の部分をまとめて行うのがこのソフトウエアです。
@@ -27,25 +28,21 @@ _clipssが作成する画像ファイルはインターネット上で不特定�
 
 ## 使用言語
 
-- C/C++ (MinGW g++)
+- C/C++ (MinGW g++ 一部-std=c++11が必要です)
 - Windows API
 
 ## 必須環境
 
 - MinGW
+- msys
 - CMake
 
 ## 必須ライブラリ
 
 - zlib
 - libpng-1.6.x
-- mozjpeg または libjpeg-9a
-
-_他のバージョンの場合、メイクファイルの書き換えが必要です_
-
-## 推奨環境
-
-- msys
+- mozjpeg または libjpeg-9b
+- zopfli
 
 ## ライセンス
 
@@ -57,7 +54,6 @@ _他のバージョンの場合、メイクファイルの書き換えが必要�
 
 - makeする前にご使用の環境下に合わせてメイクファイルのlibjpeg/libpng/zlibのパスを変更してください<del>（autotoolsは甘え）</del>
 - 文字コードはBOM付きUTF-8形式で保存することを推奨します。OSを超えた操作を行う場合はShift-JISよりも良いかなと思った次第です。現状Windowsのみの利用ですので無意味かもしれませんが
-- 一応cppですが、ほぼC++染みたことはしていないので無駄かなあとも思っています。今後の懸案事項です
 
 ## ビルド方法
 
@@ -70,10 +66,6 @@ msysの場合（shが使える場合）
 mozjpegを使用する場合はUSE_MOZJPEG=1を与えます
 
     $ make USE_MOZJPEG=1
-
-msysを使わない場合はmozjpegのみが使えますので```USE_MOZJPEG```オプションは使用しません
-
-    > mingw32-make -f makefile.mingw
 
 ## ソフトウエアの操作方法
 
@@ -93,23 +85,38 @@ msysを使わない場合はmozjpegのみが使えますので```USE_MOZJPEG```�
 
 ## ビルドに関する補足事項
 
-### msysを使わない場合の制限
+### msysが無い場合
 
-- jpeg-9aは使えません。CMakeが使える環境でのみ構築するのでlibpng1.6とmozjpegの組み合わせになります。jpeg-9aを使用する場合はmsysを導入してください
+今回からmsysが必須になりました。msysを使わない方法のサポートは行いません
 
-### jpeg-9aのビルドに失敗する場合
+### jpeg-9bのビルドに失敗する場合
 
-- ```./configure```で作成される```jconfig.h```に（```#undef```されているはずの）```#define HAVE_PROTOTYPES 1```を付け加え有効にしてみてください。書き換えても上書きされる場合がありますので、個別に```make```すると解消されるかもしれません（patchが使えれば良いのですが・・・）
+- ```autoheader```で失敗する場合。```/mingw```がマウントされていますか？されていないのであれば```fstab```を編集して追加してみてください
 
-<pre><code>
-5c5,6
-< #undef HAVE_PROTOTYPES
----
-> //#undef HAVE_PROTOTYPES
-> #define HAVE_PROTOTYPES 1
-</code></pre>
+### それでもjpeg-9bのビルドに失敗する場合
 
-**ということもあって、msys環境の構築とmozjpegの利用を推奨します**
+- ```./configure```で作成される```jconfig.h```に（```#undef```されているはずの）```#define HAVE_PROTOTYPES 1```を付け加え有効にしてみてください。
+
+
+    $ mv jconfig.h ＿jconfig.h
+    $ awk '{sub("#undef HAVE_PROTOTYPES", "#define HAVE_PROTOTYPES 1"); print > "jconfig.h"}' $＿jconfig.h
+    $ rm -f ＿jconfig.h
+
+#### 一時的な手動の対策
+
+- 以下のパッチを当てます
+
+    <pre><code>
+    5c5,6
+    < #undef HAVE_PROTOTYPES
+    ---
+    > //#undef HAVE_PROTOTYPES
+    > #define HAVE_PROTOTYPES 1
+    </code></pre>
+
+### zopfliへの対応
+
+- ```zopfli```の使用は一度作成されたPNGを再圧縮するという手順をとっています。公式のように```lodepng```を利用した出力は行っておりません
 
 ## その他補足事項
 

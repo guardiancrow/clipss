@@ -31,7 +31,7 @@ clipssが作成する画像ファイルはインターネット上で不特定�
 　MITライセンス
 　http://opensource.org/licenses/mit-license.php
 
-　zlib,libpng,mozjpegを使用しています。別ファイルでライセンスの提示があります
+　zlib,zopfli,libpng,mozjpegを使用しています。別ファイルでライセンスの提示があります
 
 
 インストール方法

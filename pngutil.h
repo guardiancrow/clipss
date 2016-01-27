@@ -1,4 +1,4 @@
-//Copyright (C) 2014, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #include <png.h>
 
@@ -6,6 +6,7 @@
 #include <windows.h>
 
 int libpngVersion(void);
+void libpngVersionString(char **ppszVer);
 
 int BMPtoPNG(const char *bmpfilename, const char *pngfilename);
 int DIBtoPNG(const char *filename, LPBITMAPINFO lpBInfo, LPBYTE lpBm);

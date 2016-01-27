@@ -31,6 +31,11 @@ SaveFormat=1
 ;0 != YES
 PngOptimize=1
 
+;UseZopfli
+;PNGOptimizeが有効なときにZopfliを使うかどうか(boolean)
+;更に重くなりますので注意してください
+UseZopfli=1
+
 ;JpegQuality
 ;JPEGの品質指定(0-100)
 JpegQuality=75

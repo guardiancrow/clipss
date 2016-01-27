@@ -5,7 +5,7 @@
 //ということでCopyrightもModificationsとしておきます
 //
 //Modifications:
-//Copyright (C) 2014 - 2015, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #include "jpegutil.h"
 
@@ -30,6 +30,34 @@
 		(((INT32) UCH(array[offset+1])) << 8) + \
 		(((INT32) UCH(array[offset+2])) << 16) + \
 		(((INT32) UCH(array[offset+3])) << 24))
+
+int libjpegVersion(void)
+{
+#ifdef USE_MOZJPEG
+	return 301;
+#else
+#ifndef JPEG_LIB_VERSION
+	return 602;
+#else
+	return JPEG_LIB_VERSION_MAJOR * 100 + JPEG_LIB_VERSION_MINOR;
+#endif
+#endif
+}
+
+void libjpegVersionString(char **ppszVer)
+{
+	if(ppszVer != NULL){
+#ifdef USE_MOZJPEG
+		strcpy(*ppszVer, "3.1");
+#else
+#ifndef JPEG_LIB_VERSION
+		strcpy(*ppszVer, "6.2");
+#else
+		sprintf(*ppszVer, "%d.%d", JPEG_LIB_VERSION_MAJOR, JPEG_LIB_VERSION_MINOR);
+#endif
+#endif
+	}
+}
 
 
 typedef struct cjpeg_source_struct * cjpeg_source_ptr;

@@ -1,4 +1,4 @@
-//Copyright (C) 2014 - 2015, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #define IDM_EXIT				101
 #define IDM_ABOUT				102
@@ -55,4 +55,5 @@
 #define IDC_STATICCONSECUTIVE           1014
 #define IDC_STATICPOSTFIX               1015
 #define IDC_STATICSAVEDIR               1016
+#define IDC_CHECKUSEZOPFLI				1017
 #define IDC_STATIC                      -1

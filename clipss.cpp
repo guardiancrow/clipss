@@ -2,7 +2,7 @@
 //詳細は添付ドキュメントをご覧ください
 //BOM付きUTF-8での保存を推奨します
 //
-//Copyright (C) 2014 - 2015, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #define WIN32_LEAN_AND_MEAN
 
@@ -22,6 +22,7 @@
 #include "resource.h"
 #include "strutil.hpp"
 #include "pngutil.h"
+#include "pngrecomp.h"
 #include "jpegutil.h"
 #include "optiondialog.h"
 
@@ -56,7 +57,7 @@ BOOL DeleteNotifyIcon(HWND hWnd, unsigned int uID);
 BOOL SwitchIdleMode(void);
 BOOL CalcTipWindowSize(HWND hWnd, SIZE *lpSize);
 BOOL BuildPopupMenu(HMENU *pHPopup);
-
+BOOL BuildTooltipString(TCHAR** ppszTip);
 
 //Global Params
 //iniに読み書きする設定用
@@ -72,6 +73,9 @@ int SaveFormat;
 
 ///PNGで保存する時に最適な圧縮を探すかどうか
 BOOL PngOptimize;
+
+///PNG圧縮でzopfliを使うかどうか
+BOOL UseZopfli;
 
 ///JPEGの品質
 int nJpegQuality;
@@ -147,7 +151,7 @@ static CLIPSS_MODE SelectMode = READYMODE;
 ///(上＜下)(左＜右)
 ///
 ///@param lprect 検査するRECT型で検査後大小が整った値になります
-inline void ValidateRect(LPRECT lprect)
+inline void _ValidateRect(LPRECT lprect)
 {
 	int i;
 
@@ -302,9 +306,13 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	ShowWindow(hTipWnd, SW_SHOW);
 	UpdateWindow(hTipWnd);
 
+	TCHAR* lpszTip = new TCHAR[64];
+	BuildTooltipString(&lpszTip);
 	AddNotifyIcon(hMainWnd, ID_TASKTRAY,
 				(HICON)LoadImage(NULL, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED),
-				(TCHAR*)szAppName);
+				//(TCHAR*)szAppName);
+				lpszTip);
+	delete [] lpszTip;
 
 	//メッセージループ
 	while(GetMessage(&msg, NULL, 0, 0))
@@ -697,7 +705,7 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 	HBITMAP bufferBitmap;
 	BITMAPINFO bmpInfo;
 	LPBYTE lpBm;
-	int nWidth, nHeight;
+	int nWidth, nHeight, nRet;
 	RECT rect = {0,0,0,0};
 
 	if(!hdc || !lprect || !filename){
@@ -708,7 +716,7 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 	lpBm = NULL;
 
 	rect = *lprect;
-	ValidateRect(&rect);
+	_ValidateRect(&rect);
 
 	nWidth  = rect.right - rect.left + 1;
 	nHeight = rect.bottom - rect.top + 1;
@@ -740,18 +748,37 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 
 	GetDIBits(bufferDC, bufferBitmap, 0, nHeight, lpBm, &bmpInfo, DIB_RGB_COLORS);
 
+	nRet = -1;
 	switch(SaveFormat){
 	case IMAGE_BMP:
-		SaveBitmap(filename, bmpInfo, lpBm);
+		nRet = SaveBitmap(filename, bmpInfo, lpBm)?0:-1;
 		break;
 	case IMAGE_JPEG:
-		DIBtoJPEG(filename, &bmpInfo, lpBm, nJpegQuality);
+		nRet = DIBtoJPEG(filename, &bmpInfo, lpBm, nJpegQuality);
 		break;
 	case IMAGE_PNG:
 		if(PngOptimize){
-			DIBtoPNG_Optimize(filename, &bmpInfo, lpBm);
+			if(UseZopfli){
+				UUID uuid;
+				unsigned char *lpUuidString = NULL;
+				string TempString;
+				UuidCreate(&uuid);
+				UuidToString(&uuid, &lpUuidString);
+				TempString += "_clipss_";
+				TempString += (char*)lpUuidString;
+				TempString += ".png";
+				RpcStringFree(&lpUuidString);
+				nRet = DIBtoPNG(TempString.c_str(), &bmpInfo, lpBm);
+				if(nRet != 0){
+					break;
+				}
+				nRet = pngrecomp_zopfli(TempString.c_str(), (char*)filename, 15);
+				std::remove(TempString.c_str());
+			}else{
+				nRet = DIBtoPNG_Optimize(filename, &bmpInfo, lpBm);
+			}
 		}else{
-			DIBtoPNG(filename, &bmpInfo, lpBm);
+			nRet = DIBtoPNG(filename, &bmpInfo, lpBm);
 		}
 		break;
 	}
@@ -760,7 +787,7 @@ BOOL CaptureRect(HDC hdc, LPRECT lprect, LPCTSTR filename)
 	DeleteDC(bufferDC);
 	DeleteObject(bufferBitmap);
 
-	return TRUE;
+	return (nRet == 0)?TRUE:FALSE;
 }
 
 ///設定に基づき保存ファイル名を構成します
@@ -843,7 +870,7 @@ BOOL ShowRubberBand(HDC hdc, LPRECT lprect, BOOL Erase)
 	}
 
 	rect = *lprect;
-	ValidateRect(&rect);
+	_ValidateRect(&rect);
 
 	//レイヤーウインドウのサイズをラバーバンドにあわせます
 	MoveWindow(hLayeredWnd,
@@ -1182,6 +1209,40 @@ LRESULT CALLBACK TipLayeredWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lP
 	return 0;
 }
 
+// タスクトレイのツールチップに表示するライブラリとバージョン情報を作成します
+BOOL BuildTooltipString(TCHAR** ppszTip)
+{
+	if(ppszTip == NULL)
+		return FALSE;
+
+	string str = szAppName;
+	char *libpngver = new char[64];
+	char *libjpegver = new char[64];
+	libpngVersionString(&libpngver);
+	libjpegVersionString(&libjpegver);
+
+	str += ":";
+	str += CLIPSS_VER_STRING;
+	str += "\nlibpng:";
+	str += libpngver;
+#ifdef USE_MOZJPEG
+	str += "\nmozjpeg:";
+#else
+	str += "\nlibjpeg:";
+#endif
+	str += libjpegver;
+	delete [] libpngver;
+	delete [] libjpegver;
+
+	memset(*ppszTip, 0, sizeof(TCHAR)*64);
+	if(str.length() >= 64){
+		strncpy(*ppszTip, str.c_str(), 63);
+	}else{
+		strncpy(*ppszTip, str.c_str(), str.length());
+	}
+	return TRUE;
+}
+
 //タスクトレイに登録します
 BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip)
 {
@@ -1194,8 +1255,9 @@ BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip)
 	nid.hIcon = hIcon;
 	nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	nid.uCallbackMessage = WM_NOTIFYICON;
+#if defined (_MSC_VER)
 	//StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), szTip); //safe copy
-	
+#else
 	if(szTip != NULL){
 		size_t n = 0;
 		if(strlen(szTip) >= 64)
@@ -1204,6 +1266,7 @@ BOOL AddNotifyIcon(HWND hWnd, unsigned int uID, HICON hIcon, TCHAR *szTip)
 			n = strlen(szTip);
 		strncpy(nid.szTip, szTip, n);
 	}
+#endif
 
 	return Shell_NotifyIcon(NIM_ADD, &nid);
 }

@@ -1,6 +1,10 @@
-//Copyright (C) 2014 - 2015, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #pragma once
+
+/// CLIPSSのバージョンです
+#define CLIPSS_VER 5
+#define CLIPSS_VER_STRING "0.5"
 
 /// 文字列のバッファサイズです
 #define STRINGBUFFERSIZE	1024

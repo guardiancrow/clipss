@@ -1,7 +1,7 @@
 //clipssの設定ダイアログとINIファイル操作の実装です
 //BOM付きUTF-8での保存を推奨します
 //
-//Copyright (C) 2014 - 2015, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -23,6 +23,7 @@ extern TCHAR szTempDir[MAX_PATH+1];
 extern TCHAR szSaveDir[MAX_PATH+1];
 extern int SaveFormat;
 extern BOOL PngOptimize;
+extern BOOL UseZopfli;
 extern int nJpegQuality;
 extern BOOL PullWindow;
 extern int PostfixMode;
@@ -75,6 +76,7 @@ BOOL LoadProfiles(void)
 	GetPrivateProfileString(_T("clipss"), _T("TempDir"), lpProcessDir, szTempDir, MAX_PATH, strINIFileName.c_str());
 	SaveFormat = GetPrivateProfileInt(_T("clipss"), _T("SaveFormat"), 1, strINIFileName.c_str());
 	PngOptimize = GetPrivateProfileInt(_T("clipss"), _T("PngOptimize"), 0, strINIFileName.c_str());
+	UseZopfli = GetPrivateProfileInt(_T("clipss"), _T("UseZopfli"), 0, strINIFileName.c_str());
 	nJpegQuality = GetPrivateProfileInt(_T("clipss"), _T("JpegQuality"), 75, strINIFileName.c_str());
 	PullWindow = GetPrivateProfileInt(_T("clipss"), _T("PullWindow"), 1, strINIFileName.c_str());
 	PostfixMode = GetPrivateProfileInt(_T("clipss"), _T("PostfixMode"), 1, strINIFileName.c_str());
@@ -111,6 +113,7 @@ BOOL SaveProfiles(void)
 {
 	string strSaveFormat = toString(SaveFormat);
 	string strPngOptimize = toString(PngOptimize);
+	string strUseZopfli = toString(UseZopfli);
 	string strJpegQuality = toString(nJpegQuality);
 	string strPullWindow = toString(PullWindow);
 	string strPostfixMode = toString(PostfixMode);
@@ -131,6 +134,7 @@ BOOL SaveProfiles(void)
 	WritePrivateProfileString(_T("clipss"), _T("TempDir"), szTempDir, strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("SaveFormat"), strSaveFormat.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("PngOptimize"), strPngOptimize.c_str(), strINIFileName.c_str());
+	WritePrivateProfileString(_T("clipss"), _T("UseZopfli"), strUseZopfli.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("JpegQuality"), strJpegQuality.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("PullWindow"), strPullWindow.c_str(), strINIFileName.c_str());
 	WritePrivateProfileString(_T("clipss"), _T("PostfixMode"), strPostfixMode.c_str(), strINIFileName.c_str());
@@ -286,11 +290,31 @@ BOOL OptionDialog_UpdateSaveFormat(HWND hDlg)
 		EnableWindow(hJpegQualSpinWnd, FALSE);
 		EnableWindow(hPngOptWnd, TRUE);
 	}else{
-		EnableWindow(hJpegQualWnd, TRUE);
+		EnableWindow(hJpegQualWnd, FALSE);
 		EnableWindow(hJpegQualSpinWnd, FALSE);
-		EnableWindow(hPngOptWnd, TRUE);
+		EnableWindow(hPngOptWnd, FALSE);
 	}
+
+	OptionDialog_UpdatePngOptimize(hDlg);
 	
+	return TRUE;
+}
+
+/// PNG最適化の設定に変化があったときに他のコントロールを更新します
+BOOL OptionDialog_UpdatePngOptimize(HWND hDlg)
+{
+	HWND hPngOptWnd = GetDlgItem(hDlg, IDC_CHECKPNGOPTIMIZE);
+	HWND hZopfliWnd = GetDlgItem(hDlg, IDC_CHECKUSEZOPFLI);
+
+	if(!IsWindowEnabled(hPngOptWnd)){
+		EnableWindow(hZopfliWnd, FALSE);
+		return TRUE;
+	}
+	if(IsDlgButtonChecked(hDlg, IDC_CHECKPNGOPTIMIZE) == BST_CHECKED){
+		EnableWindow(hZopfliWnd, TRUE);
+	}else{
+		EnableWindow(hZopfliWnd, FALSE);
+	}
 	return TRUE;
 }
 
@@ -476,6 +500,13 @@ BOOL OptionDialog_SaveSettings(HWND hDlg)
 		PngOptimize = FALSE;
 	}
 
+	if(IsDlgButtonChecked(hDlg, IDC_CHECKUSEZOPFLI) == BST_CHECKED){
+		UseZopfli = TRUE;
+	}else{
+		UseZopfli = FALSE;
+	}
+
+
 	if(IsDlgButtonChecked(hDlg, IDC_CHECKPULLWINDOW) == BST_CHECKED){
 		PullWindow = TRUE;
 	}else{
@@ -534,6 +565,8 @@ INT_PTR CALLBACK OptionDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 			if(HIWORD(wParam) == CBN_SELCHANGE){
 				OptionDialog_UpdatePostfixMode(hDlg);
 			}
+		}else if(LOWORD(wParam) == IDC_CHECKPNGOPTIMIZE){
+			OptionDialog_UpdatePngOptimize(hDlg);
         }else{
 			return (INT_PTR)FALSE;
 		}

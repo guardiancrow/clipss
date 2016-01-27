@@ -1,4 +1,4 @@
-//Copyright (C) 2014, guardiancrow
+//Copyright (C) 2014 - 2016, guardiancrow
 
 #include "pngutil.h"
 #include "strutil.hpp"
@@ -22,6 +22,14 @@ int libpngVersion(void)
 {
 	return png_access_version_number();
 }
+
+void libpngVersionString(char **ppszVer)
+{
+	if(ppszVer != NULL){
+		strcpy(*ppszVer, PNG_LIBPNG_VER_STRING);
+	}
+}
+
 
 ///PNGフィルタ定義用
 const int pngfilters[] = {

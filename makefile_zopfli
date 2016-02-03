@@ -21,19 +21,17 @@ ZOPFLILIB_OBJ := $(ZOPFLILIB_SRC:%.c=$(OUT_DIR)%.o)
 .PHONY: libzopfli
 
 libzopfli: $(ZOPFLILIB_OBJ)
-	@if [ ! -d $(OBJOUT_DIR) ]; then\
-		mkdir $(OBJOUT_DIR);\
+	@if [ ! -d $(OUT_DIR) ]; then\
+		mkdir $(OUT_DIR);\
 	fi
 	@if [ ! -d $(RELEASE_DIR) ]; then\
 		mkdir $(RELEASE_DIR);\
 	fi
 	$(CC) $(ZOPFLILIB_OBJ) $(CFLAGS) -shared -Wl,-soname,libzopfli.dll,--out-implib,$(OUT_DIR)libzopfli.dll.a -o $(OUT_DIR)libzopfli.dll
 
-$(OBJOUT_DIR)%.o: $(ZOPFLI_LIB_DIR)%.c
+$(OUT_DIR)%.o: $(ZOPFLI_LIB_DIR)%.c
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 clean:
-	rm -f $(OUT_DIR)*.o
-	rm -f $(OUT_DIR)libzopfli.dll
-	rm -f $(OUT_DIR)libzopfli.dll.a
+	rm -fR $(OUT_DIR)
 
